@@ -13,8 +13,8 @@ import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resume
 
 class SmsSender(private val context: Context) {
-    suspend fun send(jobId: Long, tel: String, message: String) {
-        val smsManager = smsManager()
+    suspend fun send(jobId: Long, tel: String, message: String, subscriptionId: Int = -1) {
+        val smsManager = smsManager(subscriptionId)
         val parts = smsManager.divideMessage(message)
         if (parts.isNullOrEmpty()) {
             throw SmsSendException("Message vide après découpage")
@@ -94,9 +94,19 @@ class SmsSender(private val context: Context) {
         }
     }
 
-    private fun smsManager(): SmsManager {
+    private fun smsManager(subscriptionId: Int): SmsManager {
+        if (subscriptionId > 0) {
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(SmsManager::class.java)
+                    ?.createForSubscriptionId(subscriptionId)
+                    ?: SmsManager.getSmsManagerForSubscriptionId(subscriptionId)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getSmsManagerForSubscriptionId(subscriptionId)
+            }
+        }
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            context.getSystemService(SmsManager::class.java) ?: SmsManager.getDefault()
+            context.getSystemService(SmsManager::class.java) ?: @Suppress("DEPRECATION") SmsManager.getDefault()
         } else {
             @Suppress("DEPRECATION")
             SmsManager.getDefault()

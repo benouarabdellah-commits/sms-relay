@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.passerelle.sms.data.SmsJob
 import com.passerelle.sms.data.SmsStatus
+import com.passerelle.sms.sms.SimOption
 import com.passerelle.sms.ui.theme.Busy
 import com.passerelle.sms.ui.theme.BusySoft
 import com.passerelle.sms.ui.theme.Danger
@@ -73,10 +75,20 @@ fun GatewayScreen(
     apiKey: String,
     port: Int,
     hasSmsPermission: Boolean,
+    simOptions: List<SimOption>,
+    selectedSimId: Int,
+    sendDelayMs: Int,
+    autoRetry: Boolean,
+    maxAttempts: Int,
     onToggle: (Boolean) -> Unit,
     onCopy: (String, String) -> Unit,
     onRegenerateKey: () -> Unit,
-    onRequestPermission: () -> Unit
+    onRequestPermission: () -> Unit,
+    onSelectSim: (Int) -> Unit,
+    onDelayChange: (Int) -> Unit,
+    onAutoRetryChange: (Boolean) -> Unit,
+    onMaxAttemptsChange: (Int) -> Unit,
+    onRetryJob: (Long) -> Unit
 ) {
     var filter by remember { mutableStateOf<SmsStatus?>(null) }
     val visible = jobs.filter {
@@ -171,6 +183,20 @@ fun GatewayScreen(
             }
         }
 
+        item {
+            SettingsCard(
+                simOptions = simOptions,
+                selectedSimId = selectedSimId,
+                sendDelayMs = sendDelayMs,
+                autoRetry = autoRetry,
+                maxAttempts = maxAttempts,
+                onSelectSim = onSelectSim,
+                onDelayChange = onDelayChange,
+                onAutoRetryChange = onAutoRetryChange,
+                onMaxAttemptsChange = onMaxAttemptsChange
+            )
+        }
+
         if (!hasSmsPermission) {
             item {
                 Banner(
@@ -224,13 +250,75 @@ fun GatewayScreen(
             }
         } else {
             items(visible, key = { it.id }) { job ->
-                JobCard(job)
+                JobCard(job = job, maxAttempts = maxAttempts, onRetry = onRetryJob)
             }
         }
     }
 }
 
 private val TealSafe = androidx.compose.ui.graphics.Color(0xFF1B8A74)
+
+@Composable
+private fun SettingsCard(
+    simOptions: List<SimOption>,
+    selectedSimId: Int,
+    sendDelayMs: Int,
+    autoRetry: Boolean,
+    maxAttempts: Int,
+    onSelectSim: (Int) -> Unit,
+    onDelayChange: (Int) -> Unit,
+    onAutoRetryChange: (Boolean) -> Unit,
+    onMaxAttemptsChange: (Int) -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Envoi", fontWeight = FontWeight.Medium, color = Ink)
+            Text("Carte SIM", color = Muted, fontSize = 13.sp)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(simOptions, key = { it.subscriptionId }) { option ->
+                    StatusFilter(option.label, selectedSimId == option.subscriptionId) {
+                        onSelectSim(option.subscriptionId)
+                    }
+                }
+            }
+            Text("Délai entre deux SMS", color = Muted, fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(1, 2, 5, 10).forEach { seconds ->
+                    StatusFilter("${seconds}s", sendDelayMs == seconds * 1000) {
+                        onDelayChange(seconds * 1000)
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Relance automatique", fontWeight = FontWeight.Medium, color = Ink)
+                    Text(
+                        if (autoRetry) "Jusqu’à $maxAttempts essais en cas d’échec" else "Un seul essai, puis échec",
+                        color = Muted,
+                        fontSize = 13.sp
+                    )
+                }
+                Switch(
+                    checked = autoRetry,
+                    onCheckedChange = onAutoRetryChange,
+                    colors = SwitchDefaults.colors(checkedTrackColor = Pine)
+                )
+            }
+            if (autoRetry) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(2, 3, 5).forEach { attempts ->
+                        StatusFilter("$attempts essais", maxAttempts == attempts) {
+                            onMaxAttemptsChange(attempts)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun InfoLine(label: String, value: String, onCopy: (String, String) -> Unit) {
@@ -301,7 +389,7 @@ private fun StatusFilter(label: String, selected: Boolean, onClick: () -> Unit) 
 }
 
 @Composable
-private fun JobCard(job: SmsJob) {
+private fun JobCard(job: SmsJob, maxAttempts: Int, onRetry: (Long) -> Unit) {
     val (bg, fg) = when (job.statusEnum) {
         SmsStatus.PENDING -> WaitSoft to Wait
         SmsStatus.SENDING -> BusySoft to Busy
@@ -310,6 +398,13 @@ private fun JobCard(job: SmsJob) {
     }
     val time = remember(job.updatedAt) {
         SimpleDateFormat("HH:mm:ss", Locale.FRANCE).format(Date(job.updatedAt))
+    }
+    val statusLabel = when {
+        job.statusEnum == SmsStatus.PENDING && job.attempt > 0 ->
+            "Relance ${job.attempt}/$maxAttempts"
+        job.statusEnum == SmsStatus.SENDING ->
+            "En cours · essai ${job.attempt.coerceAtLeast(1)}/$maxAttempts"
+        else -> job.statusEnum.labelFr
     }
     Card(
         shape = RoundedCornerShape(18.dp),
@@ -324,13 +419,18 @@ private fun JobCard(job: SmsJob) {
                         .background(bg)
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
-                    Text(job.statusEnum.labelFr, color = fg, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text(statusLabel, color = fg, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 }
             }
             Text(job.message, color = Ink, fontSize = 15.sp)
             Text(time, color = Muted, fontSize = 12.sp)
             if (!job.error.isNullOrBlank()) {
-                Text(job.error, color = Danger, fontSize = 13.sp)
+                Text(job.error, color = if (job.statusEnum == SmsStatus.FAILED) Danger else Wait, fontSize = 13.sp)
+            }
+            if (job.statusEnum == SmsStatus.FAILED) {
+                TextButton(onClick = { onRetry(job.id) }) {
+                    Text("Relancer")
+                }
             }
         }
     }

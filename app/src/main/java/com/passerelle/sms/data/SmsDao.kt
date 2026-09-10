@@ -19,12 +19,12 @@ interface SmsDao {
     @Query(
         """
         SELECT * FROM sms_jobs
-        WHERE status = 'pending'
+        WHERE status = 'pending' AND nextAttemptAt <= :now
         ORDER BY createdAt ASC
         LIMIT 1
         """
     )
-    suspend fun nextPending(): SmsJob?
+    suspend fun nextPending(now: Long): SmsJob?
 
     @Insert
     suspend fun insert(job: SmsJob): Long
@@ -32,11 +32,31 @@ interface SmsDao {
     @Query(
         """
         UPDATE sms_jobs
-        SET status = :status, error = :error, updatedAt = :updatedAt
+        SET status = :status,
+            error = :error,
+            updatedAt = :updatedAt,
+            attempt = :attempt,
+            nextAttemptAt = :nextAttemptAt
         WHERE id = :id
         """
     )
-    suspend fun updateStatus(id: Long, status: String, error: String?, updatedAt: Long)
+    suspend fun updateProgress(
+        id: Long,
+        status: String,
+        error: String?,
+        updatedAt: Long,
+        attempt: Int,
+        nextAttemptAt: Long
+    )
+
+    @Query(
+        """
+        UPDATE sms_jobs
+        SET status = 'pending', error = NULL, nextAttemptAt = 0, updatedAt = :updatedAt
+        WHERE status = 'sending'
+        """
+    )
+    suspend fun recoverStuckSending(updatedAt: Long)
 
     @Query("SELECT COUNT(*) FROM sms_jobs WHERE status = :status")
     suspend fun countByStatus(status: String): Int

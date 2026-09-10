@@ -10,8 +10,15 @@ Aucun serveur distant. Le PC et le téléphone doivent être sur le **même Wi-F
 2. Autorisez l’installation depuis cette source.
 3. Ouvrez **Passerelle SMS**, acceptez l’envoi de SMS et les notifications.
 4. Activez l’écoute (interrupteur). L’écran affiche l’URL (`http://192.168.x.x:8765`) et un **jeton**.
+5. Choisissez la carte SIM (si le téléphone en a deux), le **délai entre deux SMS**, et la **relance automatique**.
 
 Gardez l’appli en avant-plan ou laissez la notification « Passerelle SMS » active. Désactivez l’optimisation batterie pour cette appli si Android coupe le serveur.
+
+## Envoi, file et relances
+
+- Les SMS partent un par un, avec le délai choisi (1, 2, 5 ou 10 secondes).
+- Si l’envoi échoue, l’appli réessaie automatiquement (2, 3 ou 5 essais). Un bouton **Relancer** reste disponible après un échec définitif.
+- Sur un téléphone dual SIM, choisissez quelle carte envoie. « SIM par défaut » utilise la SIM SMS du système.
 
 ## Envoyer depuis le PC
 

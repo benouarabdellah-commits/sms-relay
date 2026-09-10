@@ -17,6 +17,7 @@ import com.passerelle.sms.PasserelleApp
 import com.passerelle.sms.R
 import com.passerelle.sms.net.GatewayServer
 import com.passerelle.sms.net.WifiInfo
+import com.passerelle.sms.sms.RetryPolicy
 import com.passerelle.sms.sms.SmsSendException
 import com.passerelle.sms.sms.SmsSender
 import kotlinx.coroutines.CancellationException
@@ -102,30 +103,41 @@ class GatewayService : LifecycleService() {
         val sender = SmsSender(this)
         worker?.cancel()
         worker = lifecycleScope.launch(Dispatchers.IO) {
+            app.repository.recoverStuckSending()
             while (isActive) {
                 val next = app.repository.nextPending()
                 if (next == null) {
                     delay(400)
                     continue
                 }
-                app.repository.markSending(next.id)
+                val sending = app.repository.markSending(next)
+                val delayMs = app.settings.sendDelayMs
+                val maxAttempts = app.settings.effectiveMaxAttempts()
+                val subscriptionId = app.settings.subscriptionId
                 try {
-                    sender.send(next.id, next.tel, next.message)
-                    app.repository.markSent(next.id)
+                    sender.send(sending.id, sending.tel, sending.message, subscriptionId)
+                    app.repository.markSent(sending)
                 } catch (t: CancellationException) {
-                    app.repository.markFailed(next.id, "Arrêté")
+                    app.repository.markFailed(sending, "Arrêté")
                     throw t
-                } catch (t: SmsSendException) {
-                    app.repository.markFailed(next.id, t.message ?: "Échec d'envoi")
                 } catch (t: Throwable) {
-                    val message = if (t.message?.contains("timeout", ignoreCase = true) == true) {
-                        "Délai dépassé"
-                    } else {
-                        t.message ?: "Échec d'envoi"
+                    val reason = when {
+                        t is SmsSendException -> t.message ?: "Échec d'envoi"
+                        t.message?.contains("timeout", ignoreCase = true) == true -> "Délai dépassé"
+                        else -> t.message ?: "Échec d'envoi"
                     }
-                    app.repository.markFailed(next.id, message)
+                    if (RetryPolicy.shouldRetry(sending.attempt, maxAttempts)) {
+                        val nextAt = RetryPolicy.nextAttemptAt(System.currentTimeMillis(), delayMs)
+                        app.repository.markRetry(
+                            sending,
+                            RetryPolicy.retryNote(reason, sending.attempt, maxAttempts, delayMs),
+                            nextAt
+                        )
+                    } else {
+                        app.repository.markFailed(sending, reason)
+                    }
                 }
-                delay(1500)
+                delay(delayMs.toLong())
             }
         }
     }

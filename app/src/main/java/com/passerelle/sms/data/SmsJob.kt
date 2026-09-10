@@ -11,7 +11,9 @@ data class SmsJob(
     val status: String = SmsStatus.PENDING.apiValue,
     val error: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val attempt: Int = 0,
+    val nextAttemptAt: Long = 0
 ) {
     val statusEnum: SmsStatus
         get() = SmsStatus.fromApi(status) ?: SmsStatus.PENDING

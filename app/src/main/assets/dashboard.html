@@ -54,10 +54,10 @@
       </div>
       <table>
         <thead>
-          <tr><th>N°</th><th>Destinataire</th><th>Message</th><th>État</th></tr>
+          <tr><th>N°</th><th>Destinataire</th><th>Message</th><th>État</th><th>Essai</th></tr>
         </thead>
         <tbody id="rows">
-          <tr><td colspan="4">En attente du jeton…</td></tr>
+          <tr><td colspan="5">En attente du jeton…</td></tr>
         </tbody>
       </table>
     </card>
@@ -79,7 +79,7 @@
       try {
         const res = await fetch("/sms", { headers: headers() });
         if (!res.ok) {
-          rowsEl.innerHTML = "<tr><td colspan='4'>Jeton refusé ou passerelle arrêtée.</td></tr>";
+          rowsEl.innerHTML = "<tr><td colspan='5'>Jeton refusé ou passerelle arrêtée.</td></tr>";
           return;
         }
         const data = await res.json();
@@ -88,16 +88,16 @@
         items.forEach((j) => { counts[j.status] = (counts[j.status] || 0) + 1; });
         countsEl.textContent = (counts.pending + counts.sending) + " en file · " + (counts.sent || 0) + " envoyés";
         if (!items.length) {
-          rowsEl.innerHTML = "<tr><td colspan='4'>Aucun SMS. Envoyez un premier message.</td></tr>";
+          rowsEl.innerHTML = "<tr><td colspan='5'>Aucun SMS. Envoyez un premier message.</td></tr>";
           return;
         }
         rowsEl.innerHTML = items.map((j) => {
           const cls = j.status || "pending";
           const msg = (j.message || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
-          return "<tr><td>" + j.id + "</td><td>" + j.tel + "</td><td>" + msg + "</td><td><span class='pill " + cls + "'>" + (j.status_label || cls) + "</span></td></tr>";
+          return "<tr><td>" + j.id + "</td><td>" + j.tel + "</td><td>" + msg + "</td><td><span class='pill " + cls + "'>" + (j.status_label || cls) + "</span></td><td>" + (j.attempt || 0) + "</td></tr>";
         }).join("");
       } catch (e) {
-        rowsEl.innerHTML = "<tr><td colspan='4'>Impossible de joindre le téléphone.</td></tr>";
+        rowsEl.innerHTML = "<tr><td colspan='5'>Impossible de joindre le téléphone.</td></tr>";
       }
     }
 

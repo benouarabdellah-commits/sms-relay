@@ -14,15 +14,19 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import com.passerelle.sms.service.GatewayService
 import com.passerelle.sms.service.GatewayState
+import com.passerelle.sms.sms.SimSlots
 import com.passerelle.sms.ui.GatewayScreen
 import com.passerelle.sms.ui.theme.PasserelleTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,14 +41,31 @@ class MainActivity : ComponentActivity() {
                 val url by GatewayState.listenUrl.collectAsStateWithLifecycle()
                 val ips by GatewayState.localIps.collectAsStateWithLifecycle()
                 var apiKey by remember { mutableStateOf(app.settings.apiKey) }
-                var hasSmsPermission by remember { mutableStateOf(hasSms()) }
-                var hasNotifyPermission by remember { mutableStateOf(hasNotifications()) }
+                var simOptions by remember { mutableStateOf(SimSlots.options(this)) }
+                var selectedSimId by remember {
+                    val options = SimSlots.options(this)
+                    val saved = app.settings.subscriptionId
+                    val resolved = if (options.any { it.subscriptionId == saved }) {
+                        saved
+                    } else {
+                        options.first().subscriptionId
+                    }
+                    app.settings.subscriptionId = resolved
+                    mutableIntStateOf(resolved)
+                }
+                var sendDelayMs by remember { mutableIntStateOf(app.settings.sendDelayMs) }
+                var autoRetry by remember { mutableStateOf(app.settings.autoRetry) }
+                var maxAttempts by remember { mutableIntStateOf(app.settings.effectiveMaxAttempts()) }
 
                 val permissionLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestMultiplePermissions()
                 ) {
                     hasSmsPermission = hasSms()
-                    hasNotifyPermission = hasNotifications()
+                    simOptions = SimSlots.options(this)
+                    if (simOptions.none { it.subscriptionId == selectedSimId }) {
+                        selectedSimId = simOptions.first().subscriptionId
+                        app.settings.subscriptionId = selectedSimId
+                    }
                     if (hasSmsPermission && app.settings.gatewayWanted && !running) {
                         startGateway()
                     }
@@ -68,6 +89,11 @@ class MainActivity : ComponentActivity() {
                     apiKey = apiKey,
                     port = app.settings.port,
                     hasSmsPermission = hasSmsPermission,
+                    simOptions = simOptions,
+                    selectedSimId = selectedSimId,
+                    sendDelayMs = sendDelayMs,
+                    autoRetry = autoRetry,
+                    maxAttempts = maxAttempts,
                     onToggle = { enabled ->
                         if (enabled) {
                             val needed = missingPermissions()
@@ -93,6 +119,28 @@ class MainActivity : ComponentActivity() {
                         permissionLauncher.launch(missingPermissions().ifEmpty {
                             arrayOf(Manifest.permission.SEND_SMS)
                         })
+                    },
+                    onSelectSim = { id ->
+                        app.settings.subscriptionId = id
+                        selectedSimId = id
+                    },
+                    onDelayChange = { ms ->
+                        app.settings.sendDelayMs = ms
+                        sendDelayMs = ms
+                    },
+                    onAutoRetryChange = { enabled ->
+                        app.settings.autoRetry = enabled
+                        autoRetry = enabled
+                        maxAttempts = app.settings.effectiveMaxAttempts()
+                    },
+                    onMaxAttemptsChange = { attempts ->
+                        app.settings.autoRetry = true
+                        app.settings.maxAttempts = attempts
+                        autoRetry = true
+                        maxAttempts = attempts
+                    },
+                    onRetryJob = { id ->
+                        lifecycleScope.launch { app.repository.retryNow(id) }
                     }
                 )
             }
@@ -128,6 +176,11 @@ class MainActivity : ComponentActivity() {
     private fun missingPermissions(): Array<String> {
         val list = mutableListOf<String>()
         if (!hasSms()) list += Manifest.permission.SEND_SMS
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            list += Manifest.permission.READ_PHONE_STATE
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotifications()) {
             list += Manifest.permission.POST_NOTIFICATIONS
         }

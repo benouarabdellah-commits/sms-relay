@@ -164,6 +164,8 @@ class GatewayServer(
         .put("status", status)
         .put("status_label", statusEnum.labelFr)
         .put("error", error ?: JSONObject.NULL)
+        .put("attempt", attempt)
+        .put("next_attempt_at", nextAttemptAt)
         .put("created_at", createdAt)
         .put("updated_at", updatedAt)
 }
