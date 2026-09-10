@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
                 val url by GatewayState.listenUrl.collectAsStateWithLifecycle()
                 val ips by GatewayState.localIps.collectAsStateWithLifecycle()
                 var apiKey by remember { mutableStateOf(app.settings.apiKey) }
+                var hasSmsPermission by remember { mutableStateOf(hasSms()) }
                 var simOptions by remember { mutableStateOf(SimSlots.options(this)) }
                 var selectedSimId by remember {
                     val options = SimSlots.options(this)
