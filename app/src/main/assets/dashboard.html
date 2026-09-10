@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Passerelle SMS</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: #f7fbf9; color: #0b1f1c; }
+    main { max-width: 720px; margin: 0 auto; padding: 28px 18px 48px; }
+    h1 { margin: 0 0 6px; font-size: 28px; }
+    p.lead { color: #5b726c; margin-top: 0; }
+    card { display: block; background: #fff; border-radius: 18px; padding: 18px; margin: 14px 0; box-shadow: 0 1px 0 #d5e6e1; }
+    label { display: block; font-size: 13px; color: #5b726c; margin-bottom: 6px; }
+    input, textarea { width: 100%; padding: 12px 14px; border: 1px solid #d5e6e1; border-radius: 12px; font: inherit; margin-bottom: 12px; }
+    textarea { min-height: 90px; resize: vertical; }
+    button { background: #0f6b5c; color: #fff; border: 0; border-radius: 12px; padding: 12px 16px; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .6; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .ok { color: #176b45; }
+    .err { color: #b42318; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 10px 6px; border-bottom: 1px solid #ecf6f3; vertical-align: top; }
+    .pill { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .pending { background: #fff4e5; color: #b54708; }
+    .sending { background: #e8f1ff; color: #175cd3; }
+    .sent { background: #e4f6ec; color: #176b45; }
+    .failed { background: #feeceb; color: #b42318; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Passerelle SMS</h1>
+    <p class="lead">Même Wi-Fi que le téléphone. Collez le jeton affiché dans l’appli, puis envoyez.</p>
+    <card>
+      <form id="form">
+        <label for="token">Jeton API</label>
+        <input id="token" name="token" autocomplete="off" placeholder="XXXX-XXXX-XXXX-XXXX" required />
+        <label for="tel">Numéro</label>
+        <input id="tel" name="tel" inputmode="tel" placeholder="+33612345678" required />
+        <label for="message">Message</label>
+        <textarea id="message" name="message" maxlength="1000" required></textarea>
+        <div class="row">
+          <button type="submit" id="send">Mettre en file</button>
+          <span id="status"></span>
+        </div>
+      </form>
+    </card>
+    <card>
+      <div class="row" style="justify-content:space-between">
+        <strong>File d’attente</strong>
+        <span id="counts"></span>
+      </div>
+      <table>
+        <thead>
+          <tr><th>N°</th><th>Destinataire</th><th>Message</th><th>État</th></tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="4">En attente du jeton…</td></tr>
+        </tbody>
+      </table>
+    </card>
+  </main>
+  <script>
+    const tokenEl = document.getElementById("token");
+    const statusEl = document.getElementById("status");
+    const rowsEl = document.getElementById("rows");
+    const countsEl = document.getElementById("counts");
+    tokenEl.value = localStorage.getItem("passerelle_token") || "";
+
+    function headers() {
+      return { "Content-Type": "application/json", "X-Api-Key": tokenEl.value.trim() };
+    }
+
+    async function refresh() {
+      const token = tokenEl.value.trim();
+      if (!token) return;
+      try {
+        const res = await fetch("/sms", { headers: headers() });
+        if (!res.ok) {
+          rowsEl.innerHTML = "<tr><td colspan='4'>Jeton refusé ou passerelle arrêtée.</td></tr>";
+          return;
+        }
+        const data = await res.json();
+        const items = data.items || [];
+        const counts = { pending: 0, sending: 0, sent: 0, failed: 0 };
+        items.forEach((j) => { counts[j.status] = (counts[j.status] || 0) + 1; });
+        countsEl.textContent = (counts.pending + counts.sending) + " en file · " + (counts.sent || 0) + " envoyés";
+        if (!items.length) {
+          rowsEl.innerHTML = "<tr><td colspan='4'>Aucun SMS. Envoyez un premier message.</td></tr>";
+          return;
+        }
+        rowsEl.innerHTML = items.map((j) => {
+          const cls = j.status || "pending";
+          const msg = (j.message || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+          return "<tr><td>" + j.id + "</td><td>" + j.tel + "</td><td>" + msg + "</td><td><span class='pill " + cls + "'>" + (j.status_label || cls) + "</span></td></tr>";
+        }).join("");
+      } catch (e) {
+        rowsEl.innerHTML = "<tr><td colspan='4'>Impossible de joindre le téléphone.</td></tr>";
+      }
+    }
+
+    document.getElementById("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const token = tokenEl.value.trim();
+      localStorage.setItem("passerelle_token", token);
+      const button = document.getElementById("send");
+      button.disabled = true;
+      statusEl.textContent = "Envoi…";
+      statusEl.className = "";
+      try {
+        const res = await fetch("/sms", {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({
+            tel: document.getElementById("tel").value,
+            message: document.getElementById("message").value
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Erreur");
+        statusEl.textContent = "En file (#" + data.id + ")";
+        statusEl.className = "ok";
+        document.getElementById("message").value = "";
+        refresh();
+      } catch (err) {
+        statusEl.textContent = err.message || "Échec";
+        statusEl.className = "err";
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    tokenEl.addEventListener("change", () => {
+      localStorage.setItem("passerelle_token", tokenEl.value.trim());
+      refresh();
+    });
+    setInterval(refresh, 2000);
+    refresh();
+  </script>
+</body>
+</html>
