@@ -5,20 +5,24 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.passerelle.sms.service.GatewayService
@@ -42,6 +46,9 @@ class MainActivity : ComponentActivity() {
                 val ips by GatewayState.localIps.collectAsStateWithLifecycle()
                 var apiKey by remember { mutableStateOf(app.settings.apiKey) }
                 var hasSmsPermission by remember { mutableStateOf(hasSms()) }
+                var smsAsked by remember { mutableStateOf(false) }
+                var smsPermanentlyDenied by remember { mutableStateOf(false) }
+                var extrasAsked by remember { mutableStateOf(false) }
                 var simOptions by remember { mutableStateOf(SimSlots.options(this)) }
                 var selectedSimId by remember {
                     val options = SimSlots.options(this)
@@ -58,26 +65,69 @@ class MainActivity : ComponentActivity() {
                 var autoRetry by remember { mutableStateOf(app.settings.autoRetry) }
                 var maxAttempts by remember { mutableIntStateOf(app.settings.effectiveMaxAttempts()) }
 
-                val permissionLauncher = rememberLauncherForActivityResult(
+                val extraPermissionLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestMultiplePermissions()
                 ) {
-                    hasSmsPermission = hasSms()
                     simOptions = SimSlots.options(this)
                     if (simOptions.none { it.subscriptionId == selectedSimId }) {
                         selectedSimId = simOptions.first().subscriptionId
                         app.settings.subscriptionId = selectedSimId
                     }
-                    if (hasSmsPermission && app.settings.gatewayWanted && !running) {
-                        startGateway()
+                }
+
+                val smsLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { granted ->
+                    hasSmsPermission = granted || hasSms()
+                    smsAsked = true
+                    smsPermanentlyDenied = !hasSmsPermission &&
+                        !ActivityCompat.shouldShowRequestPermissionRationale(
+                            this,
+                            Manifest.permission.SEND_SMS
+                        )
+                    if (hasSmsPermission) {
+                        extrasAsked = true
+                        val extras = extraPermissions()
+                        if (extras.isNotEmpty()) extraPermissionLauncher.launch(extras)
+                        if (app.settings.gatewayWanted && !running) startGateway()
                     }
                 }
 
-                LaunchedEffect(Unit) {
-                    val needed = missingPermissions()
-                    if (needed.isNotEmpty()) {
-                        permissionLauncher.launch(needed)
-                    } else if (app.settings.gatewayWanted) {
-                        startGateway()
+                fun askSmsNow(openSettingsIfBlocked: Boolean = false) {
+                    if (hasSms()) {
+                        hasSmsPermission = true
+                        smsPermanentlyDenied = false
+                        return
+                    }
+                    val canShowDialog = !smsAsked ||
+                        ActivityCompat.shouldShowRequestPermissionRationale(
+                            this,
+                            Manifest.permission.SEND_SMS
+                        )
+                    if (canShowDialog) {
+                        smsLauncher.launch(Manifest.permission.SEND_SMS)
+                        return
+                    }
+                    smsPermanentlyDenied = true
+                    if (openSettingsIfBlocked) openAppSettings()
+                }
+
+                LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+                    hasSmsPermission = hasSms()
+                    if (hasSmsPermission) {
+                        smsPermanentlyDenied = false
+                        val extras = extraPermissions()
+                        if (!extrasAsked && extras.isNotEmpty()) {
+                            extrasAsked = true
+                            extraPermissionLauncher.launch(extras)
+                        }
+                    } else if (!smsAsked) {
+                        askSmsNow()
+                    } else {
+                        smsPermanentlyDenied = !ActivityCompat.shouldShowRequestPermissionRationale(
+                            this,
+                            Manifest.permission.SEND_SMS
+                        )
                     }
                 }
 
@@ -97,9 +147,8 @@ class MainActivity : ComponentActivity() {
                     maxAttempts = maxAttempts,
                     onToggle = { enabled ->
                         if (enabled) {
-                            val needed = missingPermissions()
-                            if (needed.isNotEmpty()) {
-                                permissionLauncher.launch(needed)
+                            if (!hasSms()) {
+                                askSmsNow(openSettingsIfBlocked = true)
                             } else {
                                 startGateway()
                             }
@@ -116,11 +165,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Toast.makeText(this, "Nouveau jeton généré", Toast.LENGTH_SHORT).show()
                     },
-                    onRequestPermission = {
-                        permissionLauncher.launch(missingPermissions().ifEmpty {
-                            arrayOf(Manifest.permission.SEND_SMS)
-                        })
-                    },
+                    onRequestPermission = { askSmsNow(openSettingsIfBlocked = true) },
                     onSelectSim = { id ->
                         app.settings.subscriptionId = id
                         selectedSimId = id
@@ -142,7 +187,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onRetryJob = { id ->
                         lifecycleScope.launch { app.repository.retryNow(id) }
-                    }
+                    },
+                    smsPermanentlyDenied = smsPermanentlyDenied,
+                    onOpenSettings = { openAppSettings() }
                 )
             }
         }
@@ -164,25 +211,30 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, "$label copié", Toast.LENGTH_SHORT).show()
     }
 
+    private fun openAppSettings() {
+        val intent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", packageName, null)
+        )
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(intent)
+    }
+
     private fun hasSms(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) ==
             PackageManager.PERMISSION_GRANTED
 
-    private fun hasNotifications(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
-        return ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun missingPermissions(): Array<String> {
+    private fun extraPermissions(): Array<String> {
         val list = mutableListOf<String>()
-        if (!hasSms()) list += Manifest.permission.SEND_SMS
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) !=
             PackageManager.PERMISSION_GRANTED
         ) {
             list += Manifest.permission.READ_PHONE_STATE
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotifications()) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
             list += Manifest.permission.POST_NOTIFICATIONS
         }
         return list.toTypedArray()

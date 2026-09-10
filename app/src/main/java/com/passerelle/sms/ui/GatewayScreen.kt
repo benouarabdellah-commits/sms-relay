@@ -88,8 +88,19 @@ fun GatewayScreen(
     onDelayChange: (Int) -> Unit,
     onAutoRetryChange: (Boolean) -> Unit,
     onMaxAttemptsChange: (Int) -> Unit,
-    onRetryJob: (Long) -> Unit
+    onRetryJob: (Long) -> Unit,
+    smsPermanentlyDenied: Boolean = false,
+    onOpenSettings: () -> Unit = {}
 ) {
+    if (!hasSmsPermission) {
+        SmsPermissionGate(
+            permanentlyDenied = smsPermanentlyDenied,
+            onAllow = onRequestPermission,
+            onOpenSettings = onOpenSettings
+        )
+        return
+    }
+
     var filter by remember { mutableStateOf<SmsStatus?>(null) }
     val visible = jobs.filter {
         when (filter) {
