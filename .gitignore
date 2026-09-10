@@ -10,6 +10,7 @@
 .cxx
 *.apk
 !dist/passerelle-sms.apk
+!Passerelle-SMS.apk
 *.ap_
 *.aab
 *.dex

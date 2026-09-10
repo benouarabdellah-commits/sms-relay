@@ -1,12 +1,16 @@
 # Passerelle SMS
 
+**Fichier à installer :** `Passerelle-SMS.apk` (à la racine du projet, ~16 Mo).
+
+C’est le même fichier que `dist/passerelle-sms.apk`. Transférez-le sur le téléphone (USB, Drive, Bluetooth, etc.), puis ouvrez-le pour l’installer.
+
 Application Android à installer sur le téléphone. Elle écoute le Wi-Fi local, reçoit un POST du PC (numéro + message), met le SMS en file, l’envoie, et affiche l’état : **en attente**, **en cours**, **envoyé** ou **échec**.
 
 Aucun serveur distant. Le PC et le téléphone doivent être sur le **même Wi-Fi**.
 
 ## Installer l’APK
 
-1. Copiez `dist/passerelle-sms.apk` sur le téléphone.
+1. Prenez le fichier **`Passerelle-SMS.apk`** à la racine du projet.
 2. Autorisez l’installation depuis cette source.
 3. Ouvrez **Passerelle SMS**, acceptez l’envoi de SMS et les notifications.
 4. Activez l’écoute (interrupteur). L’écran affiche l’URL (`http://192.168.x.x:8765`) et un **jeton**.
